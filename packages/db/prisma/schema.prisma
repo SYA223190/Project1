@@ -1,0 +1,548 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String?
+  passwordHash     String?
+  emailVerified    DateTime?
+  image            String?
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  authAccounts AuthAccount[]
+  sessions     Session[]
+  members      OrganizationMember[]
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+model AuthAccount {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("auth_accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Organization ─────────────────────────────────────────────────────────────
+
+model Organization {
+  id                 String    @id @default(cuid())
+  name               String
+  slug               String    @unique
+  baseCurrency       String    @default("USD")
+  country            String    @default("US")
+  fiscalYearStart    Int       @default(1)
+  decimalPlaces      Int       @default(2)
+  timezone           String    @default("America/New_York")
+  address            Json?
+  phone              String?
+  website            String?
+  taxNumber          String?
+  logoUrl            String?
+  isActive           Boolean   @default(true)
+  firstTransactionAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  members        OrganizationMember[]
+  accounts       Account[]
+  taxes          Tax[]
+  taxGroups      TaxGroup[]
+  currencyRates  CurrencyRate[]
+  journalEntries JournalEntry[]
+  manualJournals ManualJournal[]
+  auditLogs      AuditLog[]
+  numberSeries   NumberSeries[]
+  customers      Customer[]
+  vendors        Vendor[]
+  items          Item[]
+  invoices       Invoice[]
+  tasks          Task[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String
+  roleId         String
+  isOwner        Boolean   @default(false)
+  invitedAt      DateTime  @default(now())
+  joinedAt       DateTime?
+  inviteToken    String?   @unique
+  inviteEmail    String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [roleId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@map("organization_members")
+}
+
+model Role {
+  id             String   @id @default(cuid())
+  organizationId String?
+  name           String
+  description    String?
+  permissions    Json     @default("{}")
+  isSystem       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  members OrganizationMember[]
+
+  @@unique([organizationId, name])
+  @@map("roles")
+}
+
+// ─── Chart of Accounts ────────────────────────────────────────────────────────
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+enum AccountSubtype {
+  CASH_AND_BANK
+  ACCOUNTS_RECEIVABLE
+  OTHER_CURRENT_ASSET
+  FIXED_ASSET
+  OTHER_ASSET
+  ACCOUNTS_PAYABLE
+  CREDIT_CARD
+  OTHER_CURRENT_LIABILITY
+  LONG_TERM_LIABILITY
+  EQUITY
+  RETAINED_EARNINGS
+  INCOME
+  OTHER_INCOME
+  COST_OF_GOODS_SOLD
+  EXPENSE
+  OTHER_EXPENSE
+}
+
+model Account {
+  id             String         @id @default(cuid())
+  organizationId String
+  parentId       String?
+  code           String
+  name           String
+  type           AccountType
+  subtype        AccountSubtype
+  description    String?
+  isActive       Boolean        @default(true)
+  isSystem       Boolean        @default(false)
+  isBankAccount  Boolean        @default(false)
+  currencyCode   String         @default("USD")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children     Account[]     @relation("AccountHierarchy")
+  journalLines JournalLine[]
+
+  @@unique([organizationId, code])
+  @@map("accounts")
+}
+
+// ─── Taxes ────────────────────────────────────────────────────────────────────
+
+model Tax {
+  id                  String    @id @default(cuid())
+  organizationId      String
+  code                String
+  name                String
+  rate                Decimal   @db.Decimal(10, 6)
+  isCompound          Boolean   @default(false)
+  parentTaxId         String?
+  authority           String?
+  effectiveFrom       DateTime  @default(now())
+  effectiveTo         DateTime?
+  isActive            Boolean   @default(true)
+  payableAccountId    String?
+  receivableAccountId String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxGroupMembers TaxGroupMember[]
+
+  @@unique([organizationId, code])
+  @@map("taxes")
+}
+
+model TaxGroup {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members      TaxGroupMember[]
+
+  @@map("tax_groups")
+}
+
+model TaxGroupMember {
+  taxGroupId String
+  taxId      String
+  order      Int    @default(0)
+
+  taxGroup TaxGroup @relation(fields: [taxGroupId], references: [id], onDelete: Cascade)
+  tax      Tax      @relation(fields: [taxId], references: [id], onDelete: Cascade)
+
+  @@id([taxGroupId, taxId])
+  @@map("tax_group_members")
+}
+
+// ─── Currency ─────────────────────────────────────────────────────────────────
+
+model CurrencyRate {
+  id             String   @id @default(cuid())
+  organizationId String
+  currencyCode   String
+  date           DateTime @db.Date
+  rateToBase     Decimal  @db.Decimal(20, 10)
+  source         String   @default("manual")
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, currencyCode, date])
+  @@map("currency_rates")
+}
+
+// ─── GL / Journal ─────────────────────────────────────────────────────────────
+
+enum JournalStatus {
+  DRAFT
+  POSTED
+  VOID
+}
+
+model JournalEntry {
+  id             String        @id @default(cuid())
+  organizationId String
+  entryNumber    String
+  date           DateTime      @db.Date
+  description    String?
+  reference      String?
+  status         JournalStatus @default(POSTED)
+  currencyCode   String        @default("USD")
+  sourceType     String?
+  sourceId       String?
+  isReversal     Boolean       @default(false)
+  reversedById   String?       @unique
+  reversalOfId   String?
+  postedAt       DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lines        JournalLine[]
+  reversedBy   JournalEntry? @relation("JournalReversal", fields: [reversedById], references: [id])
+  reversalOf   JournalEntry? @relation("JournalReversal")
+
+  @@unique([organizationId, entryNumber])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String   @id @default(cuid())
+  journalEntryId String
+  accountId      String
+  description    String?
+  debit          Decimal  @default(0) @db.Decimal(20, 2)
+  credit         Decimal  @default(0) @db.Decimal(20, 2)
+  currencyCode   String   @default("USD")
+  fxRate         Decimal  @default(1) @db.Decimal(20, 10)
+  amountBase     Decimal  @default(0) @db.Decimal(20, 2)
+  order          Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account      Account      @relation(fields: [accountId], references: [id])
+
+  @@map("journal_lines")
+}
+
+// ─── Manual Journal ───────────────────────────────────────────────────────────
+
+model ManualJournal {
+  id             String        @id @default(cuid())
+  organizationId String
+  journalEntryId String?       @unique
+  number         String
+  date           DateTime      @db.Date
+  notes          String?
+  reference      String?
+  status         JournalStatus @default(DRAFT)
+  currencyCode   String        @default("USD")
+  lines          Json          @default("[]")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, number])
+  @@map("manual_journals")
+}
+
+// ─── Number Series ────────────────────────────────────────────────────────────
+
+model NumberSeries {
+  id             String   @id @default(cuid())
+  organizationId String
+  module         String
+  prefix         String
+  nextNumber     Int      @default(1)
+  padLength      Int      @default(5)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, module])
+  @@map("number_series")
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  occurredAt     DateTime @default(now())
+  entityType     String
+  entityId       String
+  action         String
+  before         Json?
+  after          Json?
+  diff           Json?
+  ip             String?
+  userAgent      String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, occurredAt])
+  @@map("audit_logs")
+}
+
+// ─── Customer ─────────────────────────────────────────────────────────────────
+
+model Customer {
+  id              String    @id @default(cuid())
+  organizationId  String
+  displayName     String
+  companyName     String?
+  firstName       String?
+  lastName        String?
+  email           String?
+  phone           String?
+  mobile          String?
+  website         String?
+  currencyCode    String    @default("USD")
+  paymentTerms    Int       @default(30)
+  taxNumber       String?
+  notes           String?
+  billingAddress  Json?
+  shippingAddress Json?
+  isActive        Boolean   @default(true)
+  openingBalance  Decimal   @default(0) @db.Decimal(20, 2)
+  portalToken     String?   @unique
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices     Invoice[]
+
+  @@map("customers")
+}
+
+// ─── Vendor ───────────────────────────────────────────────────────────────────
+
+model Vendor {
+  id             String    @id @default(cuid())
+  organizationId String
+  displayName    String
+  companyName    String?
+  firstName      String?
+  lastName       String?
+  email          String?
+  phone          String?
+  mobile         String?
+  website        String?
+  currencyCode   String    @default("USD")
+  paymentTerms   Int       @default(30)
+  taxNumber      String?
+  notes          String?
+  billingAddress Json?
+  isActive       Boolean   @default(true)
+  openingBalance Decimal   @default(0) @db.Decimal(20, 2)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("vendors")
+}
+
+// ─── Items ────────────────────────────────────────────────────────────────────
+
+enum ItemType {
+  GOODS
+  SERVICE
+}
+
+enum CostMethod {
+  FIFO
+  WEIGHTED_AVERAGE
+}
+
+model Item {
+  id                String     @id @default(cuid())
+  organizationId    String
+  name              String
+  sku               String?
+  description       String?
+  type              ItemType   @default(SERVICE)
+  unit              String?
+  salesPrice        Decimal    @default(0) @db.Decimal(20, 2)
+  purchasePrice     Decimal    @default(0) @db.Decimal(20, 2)
+  salesAccountId    String?
+  purchaseAccountId String?
+  trackInventory    Boolean    @default(false)
+  stockOnHand       Decimal    @default(0) @db.Decimal(20, 4)
+  reorderLevel      Decimal?   @db.Decimal(20, 4)
+  openingStock      Decimal    @default(0) @db.Decimal(20, 4)
+  costMethod        CostMethod @default(FIFO)
+  isActive          Boolean    @default(true)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  deletedAt         DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("items")
+}
+
+// ─── Invoice (stub for GL service testing in Slice 1) ─────────────────────────
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIAL
+  PAID
+  VOID
+  OVERDUE
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  organizationId String
+  customerId     String
+  number         String
+  date           DateTime      @db.Date
+  dueDate        DateTime      @db.Date
+  status         InvoiceStatus @default(DRAFT)
+  currencyCode   String        @default("USD")
+  subtotal       Decimal       @default(0) @db.Decimal(20, 2)
+  taxAmount      Decimal       @default(0) @db.Decimal(20, 2)
+  total          Decimal       @default(0) @db.Decimal(20, 2)
+  amountDue      Decimal       @default(0) @db.Decimal(20, 2)
+  notes          String?
+  journalEntryId String?       @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id])
+
+  @@unique([organizationId, number])
+  @@map("invoices")
+}
+
+// ─── Tasks (lightweight model for Workflow action "Create Task") ──────────────
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+}
+
+model Task {
+  id             String     @id @default(cuid())
+  organizationId String
+  title          String
+  description    String?
+  status         TaskStatus @default(OPEN)
+  dueDate        DateTime?
+  assigneeId     String?
+  entityType     String?
+  entityId       String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("tasks")
+}

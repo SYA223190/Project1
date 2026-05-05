@@ -1,0 +1,41 @@
+{
+  "name": "@zoho-clone/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./gl": {
+      "types": "./src/gl/index.ts",
+      "default": "./src/gl/index.ts"
+    },
+    "./audit": {
+      "types": "./src/audit/index.ts",
+      "default": "./src/audit/index.ts"
+    },
+    "./tax": {
+      "types": "./src/tax/index.ts",
+      "default": "./src/tax/index.ts"
+    },
+    "./numbering": {
+      "types": "./src/numbering/index.ts",
+      "default": "./src/numbering/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zoho-clone/db": "workspace:*",
+    "@zoho-clone/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0",
+    "typescript": "^5.4.5",
+    "@types/node": "^20.14.0"
+  }
+}
